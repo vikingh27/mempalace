@@ -22,7 +22,7 @@
     }
   },
   "test_mode": {
-    "enabled": false,
+    "enabled": true,
     "active_max_minutes": 5,
     "warm_max_minutes": 10,
     "cold_max_minutes": 15
