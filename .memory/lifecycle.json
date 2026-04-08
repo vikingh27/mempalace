@@ -1,0 +1,37 @@
+{
+  "tiers": {
+    "active": {
+      "description": "Full verbatim memories. Claude searches these directly.",
+      "max_age_days": 30,
+      "action": "summarize and move to warm"
+    },
+    "warm": {
+      "description": "Summarized memories. Key decisions, outcomes, rationale preserved.",
+      "max_age_days": 60,
+      "action": "extract facts to index, move to cold"
+    },
+    "cold": {
+      "description": "Index entries only. One-line summaries in manifest.",
+      "max_age_days": 90,
+      "action": "move to archive, keep only knowledge graph facts"
+    },
+    "archive": {
+      "description": "Deep storage. Originals kept but not searched.",
+      "max_age_days": null,
+      "action": "permanent storage"
+    }
+  },
+  "test_mode": {
+    "enabled": false,
+    "active_max_minutes": 5,
+    "warm_max_minutes": 10,
+    "cold_max_minutes": 15
+  },
+  "halls": [
+    "decisions",
+    "discoveries",
+    "preferences",
+    "events",
+    "advice"
+  ]
+}
