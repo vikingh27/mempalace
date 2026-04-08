@@ -1,16 +1,20 @@
 # AI Memory Has a Garbage Collection Problem
 
-## The Problem Nobody Talks About
+## How It Started
 
-Every AI memory system I've looked at — MCP servers, vector databases, Auto Memory — focuses on the same two things: **storage** and **retrieval**. Save everything. Search it later.
+I've been using Claude Code heavily across sessions, and my workflow for keeping track of things was... manual. I'd ask Claude to create documents saving key discussions and decisions from each session. Then in the next session, I'd reference those documents to recall what I'd decided. I was tracking dates and timestamps myself to keep everything organized. When I added features or completed tasks, I'd ask Claude to mark those items as done so the docs stayed current.
 
-Nobody asks: *what happens after 6 months?*
+It worked. But it didn't scale. The documents kept growing. Finding the right decision from three weeks ago meant scrolling through walls of text. There was no aging, no cleanup, no structure beyond "here's another document."
 
-I analyzed [MemPalace](https://github.com/igorls/mempalace), one of the most impressive open-source AI memory projects out there. It scores 96.6% on LongMemEval with zero API calls. Genuinely great engineering. But it has 22,000+ memories with **zero lifecycle policy**. No TTL. No archival. No tiering. It stores everything forever — which is exactly why it needs ChromaDB and vector search to cope with the growing haystack.
+Then I looked at [MemPalace](https://github.com/igorls/mempalace) — one of the most impressive open-source AI memory projects out there. It scores 96.6% on LongMemEval with zero API calls. Genuinely great engineering. But it requires ChromaDB. A vector database. External dependencies.
 
-Claude Code's Auto Memory has the same pattern. It grows until it hits the line limit, and then... what?
+That's when I thought: **what if I could do this with just Claude Code's native capabilities?** Skills, hooks, and a CLAUDE.md protocol — no vector database, no MCP server, no external dependencies. Just structured markdown files and Claude's built-in tools.
+
+So I started researching. And what I found is that the real gap in AI memory isn't storage or retrieval — it's **lifecycle management**. MemPalace has 22,000+ memories with zero lifecycle policy. Claude Code's Auto Memory grows until it hits the line limit. They all just accumulate forever.
 
 **The gap isn't retrieval. It's decay.**
+
+I'm sharing what I built, with actual outputs from a real session where I tested the full lifecycle end-to-end. I'd love feedback — if there's a better way to handle memory lifecycle, I'm all ears.
 
 ---
 
@@ -352,25 +356,17 @@ The fix isn't a product. It's a practice, codified into skills.
 
 ---
 
-## What This Means for Claude Code
+## A Few Things I Noticed Along the Way
 
-A few observations for the community and team:
+**Skills are underrated.** They're 5-10x cheaper than MCP on token budget and more flexible. For tasks where Claude's built-in tools are sufficient (and they usually are), skills are the better primitive. I think more people should be reaching for skills before MCP.
 
-**1. Skills are underrated.**
-They're 5-10x cheaper than MCP on token budget and more flexible. For tasks where Claude's built-in tools are sufficient (and they usually are), skills are the better primitive. I think more people should be building with skills before reaching for MCP.
+**CLAUDE.md + Skills + Hooks is surprisingly powerful as a combo.** The protocol layer (CLAUDE.md) defines session behavior. The skill layer handles on-demand commands. The hook layer handles automation. This combination built a complete memory management system with zero external dependencies. I didn't expect it to work this well.
 
-**2. CLAUDE.md + Skills + Hooks is a full application framework.**
-The protocol layer (CLAUDE.md) defines session behavior. The skill layer handles on-demand commands. The hook layer handles automation. This combination built a complete memory management system with zero external dependencies.
-
-**3. Memory lifecycle is a real gap.**
-As people use Claude Code for longer projects across more sessions, the "just accumulate everything" approach will hit scaling walls. Even at hundreds of files, some form of aging and summarization keeps the context window efficient. Would a built-in lifecycle feature for Auto Memory be useful?
-
-**4. The test mode pattern is worth copying.**
-`lifecycle.json` supports minute-based thresholds so you can validate the full pipeline in minutes instead of months. More configs should ship with a fast-validation mode.
+**The test mode pattern saved me a lot of time.** `lifecycle.json` supports minute-based thresholds so you can validate the full pipeline in minutes instead of waiting 30 days. If you're building anything with time-based behavior, I'd recommend shipping a fast-validation mode alongside it.
 
 ---
 
-## Try It
+## Try It Yourself
 
 The full implementation: [vikingh27/mempalace](https://github.com/vikingh27/mempalace)
 
@@ -396,13 +392,13 @@ cd mempalace
 
 ---
 
-## Discussion
+## What Do You Think?
 
-I'd love to hear from others:
+This is very much a v1. I'd genuinely love feedback and suggestions:
 
-- How are you handling memory growth over time?
-- Has anyone else hit the "Auto Memory just accumulates" wall?
-- Would a built-in lifecycle/aging feature for Auto Memory be useful?
-- What other systems have you built with Skills + Hooks + CLAUDE.md?
+- **Is there a better way to handle memory lifecycle?** I went with 30/60/90 day tiering, but maybe there's a smarter approach — usage-based decay, importance scoring, something else entirely?
+- **How are you managing memory growth?** If you're using Claude Code across long projects, I'm curious what's working for you.
+- **Has anyone else hit the "Auto Memory just accumulates" wall?** Would a built-in lifecycle/aging feature be useful?
+- **What else have you built with Skills + Hooks + CLAUDE.md?** I feel like this combo is underexplored.
 
-The gap is real. The fix doesn't require new infrastructure — just discipline applied to what already exists.
+I started this because my manual document-tracking workflow wasn't scaling. This is what I landed on. If you see ways to improve it — or if you're solving the same problem differently — I'd love to hear about it.
