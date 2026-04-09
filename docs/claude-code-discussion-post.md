@@ -1,4 +1,4 @@
-# AI Memory Has a Garbage Collection Problem
+# How I'm Managing Memory Lifecycle in Claude Code (Inspired by MemPalace)
 
 ## How It Started
 
@@ -6,40 +6,61 @@ I've been using Claude Code heavily across sessions, and my workflow for keeping
 
 It worked. But it didn't scale. The documents kept growing. Finding the right decision from three weeks ago meant scrolling through walls of text. There was no aging, no cleanup, no structure beyond "here's another document."
 
-Then I looked at [MemPalace](https://github.com/igorls/mempalace) — one of the most impressive open-source AI memory projects out there. It scores 96.6% on LongMemEval with zero API calls. Genuinely great engineering. But it requires ChromaDB. A vector database. External dependencies.
+Then I looked at [MemPalace](https://github.com/igorls/mempalace) — genuinely impressive. It scores 96.6% on LongMemEval with zero API calls. Great engineering, great philosophy (store raw text, don't summarize). But it requires ChromaDB — a vector database, external dependencies, an MCP server.
 
-That's when I thought: **what if I could do this with just Claude Code's native capabilities?** Skills, hooks, and a CLAUDE.md protocol — no vector database, no MCP server, no external dependencies. Just structured markdown files and Claude's built-in tools.
+That got me thinking: **what if I could manage memory using just Claude Code's native capabilities?** Skills, hooks, and a CLAUDE.md protocol — no vector database, no MCP server, no external dependencies. Just structured markdown files and Claude's built-in tools.
 
-So I started researching. And what I found is that the real gap in AI memory isn't storage or retrieval — it's **lifecycle management**. MemPalace has 22,000+ memories with zero lifecycle policy. Claude Code's Auto Memory grows until it hits the line limit. They all just accumulate forever.
+So I started researching. And what I found is that the real gap isn't storage or retrieval — it's **lifecycle management**. MemPalace has 22,000+ memories with zero lifecycle policy. Claude Code's Auto Memory grows until it hits the line limit. They all just accumulate forever. Nobody's tackling decay.
 
-**The gap isn't retrieval. It's decay.**
-
-I'm sharing what I built, with actual outputs from a real session where I tested the full lifecycle end-to-end. I'd love feedback — if there's a better way to handle memory lifecycle, I'm all ears.
+I'm sharing what I've built so far — it's working for me, but it's very much a v1. I'd love to hear how others are handling this, and whether there's a better approach I'm missing.
 
 ---
 
 ## What I Built
 
-A file-based memory system using **4 Claude Code skills, 1 hook, and a CLAUDE.md protocol**. No vector database. No MCP server. No external dependencies. Just structured markdown files and Claude Code's native capabilities.
+A file-based memory system using **4 Claude Code skills, 1 hook, and a CLAUDE.md protocol**. No vector database. No MCP server. No external dependencies.
+
+The system has two memory locations — **project-scoped** and **shared** — so decisions can stay local to a repo or be accessible across all projects.
 
 ### Directory Structure
 
 ```
-.memory/
-├── active/                    # Full verbatim memories (0-30 days)
-│   └── <wing>/                # Project grouping (e.g., "mempalace")
-│       ├── _index.md          # Wing overview
-│       └── <room>/            # Topic grouping (e.g., "memory-philosophy")
+<repo>/.memory/                     # PROJECT — specific to this repo
+├── active/                         # Full verbatim memories (0-30 days)
+│   └── <wing>/                     # Topic grouping
+│       ├── _index.md               # Wing overview
+│       └── <room>/                 # Subtopic
 │           └── 2026-04-08_14-30_skills-over-mcp.md
-├── warm/                      # Summarized memories (30-60 days)
-├── cold/                      # Index entries only (60-90 days)
-│   └── manifest.md            # One-line per memory
-├── archive/                   # Permanent deep storage (90+ days)
-├── diary/                     # Session summaries
-└── lifecycle.json             # Tiering config with test mode
+├── warm/                           # Summarized memories (30-60 days)
+├── cold/                           # Index entries only (60-90 days)
+│   └── manifest.md
+├── archive/                        # Permanent deep storage (90+ days)
+├── diary/                          # Session summaries
+└── lifecycle.json                  # Tiering config
+
+~/.memory/                          # SHARED — accessible from any project
+├── active/
+│   └── design-system/              # Cross-project decisions
+│       └── color-tokens/
+├── warm/
+├── cold/
+│   └── manifest.md
+└── archive/
 ```
 
+### Why Two Locations?
+
+This was a real problem I hit: I made a design-system decision in project-1, then started working in project-2 which uses the same design system. I needed that decision to be available in project-2 without copy-pasting files around.
+
+The solution is simple:
+- **Project memory** (`<repo>/.memory/`) — decisions specific to this codebase (API design, database schema, feature architecture). Travels with the repo, can be shared with a team via git.
+- **Shared memory** (`~/.memory/`) — decisions that apply across projects (design systems, coding conventions, infrastructure patterns, personal preferences). Accessible from any project.
+
+At save time, the `/save-memory` skill determines scope — either by asking, or by inferring from the topic. Design-system decisions default to shared. Database schema decisions default to project.
+
 ### The 30/60/90 Tiering Flow
+
+This is the core of the lifecycle management:
 
 ```
 Active (full verbatim)
@@ -52,18 +73,25 @@ Active (full verbatim)
     │                 │                 │               (archive copy stays forever)
 ```
 
+- **Active (0-30 days)**: Full verbatim text. Claude searches these directly with grep + read. Target: ~200-300 files max.
+- **Warm (30-60 days)**: Summarized to 3-5 bullet points. Key decisions, exact quotes, and specific numbers preserved. Originals moved to archive.
+- **Cold (60-90 days)**: One-line entry in a manifest file. Just enough to know it existed.
+- **Archive (90+ days)**: Permanent storage. Never auto-deleted. Available if you ever need the full original.
+
+The idea is to keep the active search space small enough that Claude's native reasoning (grep + read + think) handles retrieval without needing a vector database. At sub-10K files, Claude reading structured files IS semantic search — with full reasoning on top.
+
 ### The 4 Skills
 
 | Skill | Purpose |
 |-------|---------|
-| `/save-memory` | File a memory with wing/room/hall classification and YAML frontmatter |
-| `/recall` | Search indexes → grep keywords → read matches → synthesize a cited answer |
-| `/memory-cleanup` | Run the lifecycle engine — age, summarize, archive, purge |
-| `/memory-status` | Dashboard: tier sizes, wings, rooms, aging alerts |
+| `/save-memory` | File a memory with wing/room/hall classification, choose project or shared scope |
+| `/recall` | Search both project and shared memory, synthesize a cited answer labeled [project] or [shared] |
+| `/memory-cleanup` | Run lifecycle on both locations — age, summarize, archive, purge |
+| `/memory-status` | Dashboard showing both locations: tier sizes, wings, rooms, aging alerts |
 
 ### The Auto-Save Hook
 
-A bash script on Claude Code's `Stop` event. Every 12 human messages, it blocks the stop and tells Claude to save important context:
+A bash script on Claude Code's `Stop` event. Every 12 human messages, it blocks the stop and reminds Claude to save important context:
 
 ```bash
 SAVE_INTERVAL=12
@@ -94,13 +122,31 @@ HOOKJSON
 fi
 ```
 
-Zero tokens. Bash script runs locally. Claude spends a few seconds organizing memories it already has in context.
+Zero extra tokens. Bash script runs locally. The hook actually fired during my test session — it blocked, I saved the hybrid architecture decision, and the session continued normally.
+
+### Global Setup
+
+For the skills and protocol to work in every project, they live at the global level:
+
+```
+~/.claude/
+├── skills/
+│   ├── save-memory/SKILL.md
+│   ├── recall/SKILL.md
+│   ├── memory-cleanup/SKILL.md
+│   └── memory-status/SKILL.md
+├── CLAUDE.md                   # Memory protocol (loads every session)
+├── settings.json               # Hook config (fires every session)
+└── memory_save_hook.sh         # Auto-save script
+```
+
+This means `/recall`, `/save-memory`, `/memory-status`, and `/memory-cleanup` work from any project, in any session, without any project-level setup.
 
 ---
 
 ## Why Skills Over MCP?
 
-This was a deliberate architectural choice, not a shortcut.
+I initially considered building this as an MCP server (that's what MemPalace does). But the token math pushed me toward skills:
 
 | | MCP Server (19 tools) | Native Skills (4 skills) |
 |---|---|---|
@@ -109,152 +155,32 @@ This was a deliberate architectural choice, not a shortcut.
 | **Tool access** | Only what the server implements | ALL of Claude's built-in tools |
 | **Flexibility** | Rigid JSON schemas | Natural language instructions + full reasoning |
 
-MCP dumps every tool schema into your context window at session start, whether you use the tools or not. Skills load a one-line description; full instructions are fetched **on-demand** only when invoked. For a memory system with 4 commands, that's the difference between ~3,000 tokens burned every session vs ~400.
+MCP dumps every tool schema into your context window at session start, whether you use the tools or not. Skills load a one-line description; full instructions are fetched **on-demand** only when invoked.
 
-And skills can use `Read`, `Grep`, `Edit`, `Bash`, `Write` — everything Claude already has. An MCP server can only do what its code implements. A skill that says "grep for keywords, read the matches, synthesize an answer" leverages Claude's full reasoning capability. An MCP tool that does keyword search returns... keyword matches.
+And skills can use `Read`, `Grep`, `Edit`, `Bash`, `Write` — everything Claude already has. A skill that says "grep for keywords, read the matches, synthesize an answer" leverages Claude's full reasoning. An MCP tool that does keyword search returns... keyword matches.
 
 ---
 
-## Live Session Demo
+## Live Demo: Lifecycle In Action
 
-I ran the full test sequence in a single session to validate every component. Here's exactly what happened.
+I ran the full test sequence in a single session. Here's what happened.
 
-### Step 1: `/memory-status` — The Dashboard
+### Lifecycle Tiering Test
 
-Started by checking the current state:
+Started with 5 active memories, enabled test mode (minute-based thresholds instead of 30-day waits), and ran `/memory-cleanup`:
 
+**Before:**
 ```
-## Memory Palace Status
-
-### Tiers
 | Tier    | Files | Description              |
 |---------|-------|--------------------------|
 | Active  | 5     | Full verbatim, 0-30 days |
 | Warm    | 0     | Summarized, 30-60 days   |
 | Cold    | 0     | Index only, 60-90 days   |
 | Archive | 0     | Permanent deep storage   |
-| Diary   | 1     | Session diary entries    |
-
-### Active Wings
-- **mempalace** (5 memories)
-  - memory-philosophy: 3 memories (latest: 2026-04-08)
-  - lifecycle-design: 1 memory (latest: 2026-04-08)
-  - mempalace-analysis: 1 memory (latest: 2026-04-08)
-
-### Lifecycle Config
-- Active threshold: 30 days | Warm: 60 days | Cold: 90 days
-- Test mode: OFF
-
-### Aging Soon
-- No memories approaching any threshold (all are from today)
 ```
 
-5 active memories, nothing in warm/cold/archive. Clean starting state.
-
-### Step 2: `/recall why did we decide against MCP?` — Retrieval With Citations
-
-Asked it a natural language question about a past decision. Here's the actual output:
-
+**After `/memory-cleanup`:**
 ```
-## Decision: Native Claude Code Skills over MCP
-
-Source: .memory/active/mempalace/memory-philosophy/2026-04-08_14-30_skills-over-mcp.md
-
-The decision came down to three factors:
-
-### 1. Token cost
-MCP loads all tool schemas at startup — MemPalace's 19 tools cost ~3,054 tokens
-every session. Native skills only load descriptions (~300-600 tokens), with full
-content fetched on-demand. Skills are 5-10x cheaper on the context window.
-
-### 2. Capability
-MCP tools are limited to what the server implements. Skills can use all of
-Claude's built-in tools (Read, Grep, Bash, Write, Edit).
-
-### 3. Claude Code already IS semantic search
-Your key observation was:
-> "Cloud Code can achieve that without ChromaDB in my understanding."
-
-This is correct for sub-10K memory files — Claude reading structured files
-and reasoning over them is effectively semantic search, without needing
-a vector database.
-```
-
-This is not keyword matching. Not nearest-embedding retrieval. Claude searched the indexes, grepped for "MCP", read the matching file, and **synthesized a reasoned answer with direct citations**. That's what "Claude Code IS semantic search" means in practice.
-
-### Step 3: `/recall top 3 decisions` — Multi-Document Synthesis
-
-Asked a broader query that required finding and ranking across multiple files:
-
-```
-## Top 3 Decisions
-
-### 1. 30/60/90 Day Memory Tiering Strategy
-Source: .memory/active/mempalace/lifecycle-design/2026-04-08_14-10_tiering-strategy-decision.md
-
-The real gap in AI memory isn't retrieval — it's lifecycle management.
-MemPalace has 22,000+ memories with zero lifecycle policy; Claude Code's
-Auto Memory grows until it hits 200 lines.
-
-> Active (0-30d, full verbatim) → Warm (30-60d, summarized)
-> → Cold (60-90d, index entries) → Archive (90d+, permanent deep storage)
-
-### 2. Native Claude Code Skills over MCP
-Source: .memory/active/mempalace/memory-philosophy/2026-04-08_14-30_skills-over-mcp.md
-
-Skills are 5-10x cheaper on the context window. Skills can use all of
-Claude's built-in tools; MCP tools are limited to what the server implements.
-
-### 3. Honest Novelty Assessment — Lifecycle Is the Gap
-Source: .memory/active/mempalace/memory-philosophy/2026-04-08_14-40_novelty-assessment.md
-
-The individual components are not novel. What's genuinely unaddressed:
-> "Everyone building AI memory focuses on storage and retrieval.
->  Nobody focuses on lifecycle and decay."
-```
-
-It found all 3 decision-tagged files, read them, ranked by significance, and presented a coherent summary with verbatim quotes. No vector database needed.
-
-### Step 4: Enable Test Mode
-
-Edited one line in `lifecycle.json`:
-
-```json
-"test_mode": {
-    "enabled": true,          // ← flipped from false
-    "active_max_minutes": 5,  // instead of 30 days
-    "warm_max_minutes": 10,   // instead of 60 days
-    "cold_max_minutes": 15    // instead of 90 days
-}
-```
-
-This lets you validate the full lifecycle pipeline in minutes instead of waiting months.
-
-### Step 5: `/memory-cleanup` — The Lifecycle Engine
-
-Ran cleanup with test mode active. All 5 memories were older than 5 minutes, so all were eligible for Active → Warm transition.
-
-**What happened for each memory:**
-
-1. Read the full verbatim file
-2. Wrote a **summary** to `.memory/warm/` — condensed to 3-5 bullet points, preserving exact quotes and specific numbers
-3. Moved the original to `.memory/archive/` (never deleted)
-4. Updated the wing index
-
-**Transition report:**
-
-```
-### Transitions: Active → Warm (5 memories)
-
-| Memory                        | Wing      | Room               |
-|-------------------------------|-----------|--------------------|
-| claude-code-is-semantic-search| mempalace | memory-philosophy  |
-| tiering-strategy-decision     | mempalace | lifecycle-design   |
-| skills-over-mcp               | mempalace | memory-philosophy  |
-| novelty-assessment            | mempalace | memory-philosophy  |
-| mempalace-substance-vs-hype   | mempalace | mempalace-analysis |
-
-### Tier Summary (Before → After)
 | Tier    | Before | After |
 |---------|--------|-------|
 | Active  | 5      | 0     |
@@ -263,12 +189,9 @@ Ran cleanup with test mode active. All 5 memories were older than 5 minutes, so 
 | Archive | 0      | 5     |
 ```
 
-### What Summarization Actually Looks Like
+Each memory was summarized to 3-5 bullets preserving exact quotes and numbers, then the original was moved to archive. Here's a real before/after:
 
-Here's a real before/after from the session — the MCP decision memory:
-
-**BEFORE — Active tier (full verbatim, 38 lines):**
-
+**Before (active — full verbatim, 38 lines):**
 ```markdown
 ---
 date: "2026-04-08T14:30:00"
@@ -296,21 +219,11 @@ skills. Decision: native skills.
 - Skills can use ALL of Claude's tools (Read, Grep, Bash, Write, Edit)
 - MCP tools are limited to what the server implements
 
-**The user's key observation:** "Cloud Code can achieve that without ChromaDB
-in my understanding." This is correct for sub-10K memory files. Claude Code
-reading structured files IS semantic search — with full reasoning on top.
-
-**Architecture chosen:**
-- /save-memory — file memories with wing/room/hall classification
-- /recall — grep + read + synthesize from memory files
-- /memory-cleanup — lifecycle tiering (the novel piece)
-- /memory-status — overview dashboard
-- Stop hook — auto-reminds to save every 12 messages
-- CLAUDE.md — memory protocol loaded every session
+**The user's key observation:** "Claude Code can achieve that without ChromaDB
+in my understanding." This is correct for sub-10K memory files...
 ```
 
-**AFTER — Warm tier (summarized, 4 bullets):**
-
+**After (warm — summarized, 4 bullets):**
 ```markdown
 ---
 date: "2026-04-08T14:30:00"
@@ -318,30 +231,71 @@ wing: mempalace
 room: memory-philosophy
 hall: decisions
 tags: [skills, mcp, tokens, architecture]
-summarized_from: .memory/active/mempalace/memory-philosophy/2026-04-08_14-30_skills-over-mcp.md
+summarized_from: .memory/active/mempalace/memory-philosophy/...
 summarized_at: "2026-04-08T15:00:00"
 ---
 
 ## Decision: Claude Code skills over MCP server for memory management
 
 - **Token cost**: MCP (19 tools) costs ~3,054 tokens at startup; native skills
-  cost ~300-600 tokens — skills are 5-10x cheaper on context window
-- **Capability**: Skills can use ALL of Claude's tools (Read, Grep, Bash, Write,
-  Edit); MCP tools limited to what the server implements
-- User's key observation: "Cloud Code can achieve that without ChromaDB" —
-  correct for sub-10K files, since Claude reading structured files IS semantic
-  search with reasoning on top
+  cost ~300-600 tokens — skills are 5-10x cheaper
+- **Capability**: Skills can use ALL of Claude's tools; MCP limited to server
+- User's observation: "Claude Code can achieve that without ChromaDB" — correct
+  for sub-10K files
 - **Architecture chosen**: /save-memory, /recall, /memory-cleanup, /memory-status,
   stop hook, CLAUDE.md protocol
 ```
 
-The summary preserves the exact quote, the specific token numbers (3,054 vs 300-600), and the decision rationale. Context is compressed ~70%, not lost. And the original is safe in `archive/` if you ever need the full version.
+~70% compression. The exact quote, the specific numbers, and the decision rationale are preserved.
+
+### `/recall` Test — Retrieval With Citations
+
+Asked a natural language question: *"Why did we decide against MCP?"*
+
+```
+## Decision: Native Claude Code Skills over MCP
+
+Source: .memory/active/mempalace/memory-philosophy/2026-04-08_14-30_skills-over-mcp.md
+
+The decision came down to three factors:
+
+### 1. Token cost
+MCP loads all tool schemas at startup — 19 tools cost ~3,054 tokens every
+session. Skills load descriptions only (~300-600 tokens). 5-10x cheaper.
+
+### 2. Capability
+Skills can use all of Claude's built-in tools. MCP is limited to what
+the server implements.
+
+### 3. Claude Code already IS semantic search
+> "Claude Code can achieve that without ChromaDB in my understanding."
+
+Correct for sub-10K memory files — Claude reading structured files and
+reasoning over them is effectively semantic search without a vector database.
+```
+
+Not a keyword match. A synthesized, reasoned answer with source citations.
+
+### Cross-Project Memory Test
+
+This was the test I was most excited about. I created a second repo (`webapp-project`) with its own project-specific memory, then verified the scoping works:
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | From webapp-project, search for shared "design system" memory | **PASS** — found in `~/.memory/`, not in project memory |
+| 2 | From webapp-project, search for project-specific "REST vs GraphQL" | **PASS** — found in project memory, not in shared |
+| 3 | From mempalace, search for webapp-project's "REST vs GraphQL" | **PASS** — not found (correct isolation) |
+| 4 | From mempalace, search for shared "design system" memory | **PASS** — found in `~/.memory/` |
+| 5 | From webapp-project, search for "all decisions" | **PASS** — merged: 1 [project] + 1 [shared] |
+| 6 | From mempalace, search for "all decisions" | **PASS** — merged: 10 [project] + 1 [shared], 0 from webapp |
+
+**6/6 tests passed.** Shared memories are visible from every project. Project memories stay scoped to their repo. No leakage between projects.
 
 ---
 
 ## An Honest Assessment
 
-I want to be transparent: **the individual components here are not novel.**
+I want to be upfront: **the individual components here are not novel.**
 
 - File-based storage — standard
 - Directory hierarchy — standard
@@ -350,9 +304,9 @@ I want to be transparent: **the individual components here are not novel.**
 
 Claude Code already has Auto Memory, CLAUDE.md, Hooks (26 event types), Skills, and the `/memory` command. The team hasn't built a full memory palace because Auto Memory solves 80% of the need, and MCP is their answer for the power-user 20%.
 
-**What's genuinely new here is applying lifecycle discipline to AI memory.** Nobody — not MemPalace, not Auto Memory, not Mem0 — has aging, summarization, and archival built in. They all accumulate forever.
+I was inspired by MemPalace's philosophy — especially the "store raw text, don't summarize" approach. What I added on top is lifecycle management, because that's the gap I kept hitting. Memories need to age, compress, and eventually get out of the way. MemPalace doesn't do this. Auto Memory doesn't do this. Nothing I've found does this.
 
-The fix isn't a product. It's a practice, codified into skills.
+What I've built is working for me. But I'm sure there are better approaches I haven't considered.
 
 ---
 
@@ -360,9 +314,11 @@ The fix isn't a product. It's a practice, codified into skills.
 
 **Skills are underrated.** They're 5-10x cheaper than MCP on token budget and more flexible. For tasks where Claude's built-in tools are sufficient (and they usually are), skills are the better primitive. I think more people should be reaching for skills before MCP.
 
-**CLAUDE.md + Skills + Hooks is surprisingly powerful as a combo.** The protocol layer (CLAUDE.md) defines session behavior. The skill layer handles on-demand commands. The hook layer handles automation. This combination built a complete memory management system with zero external dependencies. I didn't expect it to work this well.
+**CLAUDE.md + Skills + Hooks is surprisingly powerful as a combo.** The protocol layer (CLAUDE.md) defines session behavior. The skill layer handles on-demand commands. The hook layer handles automation. This combination built a complete memory management system — including cross-project memory — with zero external dependencies. I didn't expect it to work this well.
 
 **The test mode pattern saved me a lot of time.** `lifecycle.json` supports minute-based thresholds so you can validate the full pipeline in minutes instead of waiting 30 days. If you're building anything with time-based behavior, I'd recommend shipping a fast-validation mode alongside it.
+
+**Cross-project memory was simpler than I expected.** I initially thought the hybrid (project + shared) setup would be complex. It's not. Skills search two paths instead of one. `/save-memory` asks one extra question (or infers scope from the topic). That's it. Everything else stays identical.
 
 ---
 
@@ -371,20 +327,20 @@ The fix isn't a product. It's a practice, codified into skills.
 The full implementation: [vikingh27/mempalace](https://github.com/vikingh27/mempalace)
 
 ```
-.claude/skills/         — All 4 skill definitions
-.memory/                — The tiered directory structure
-hooks/memory_save_hook.sh — Auto-save hook
-CLAUDE.md               — The memory protocol
-.memory/lifecycle.json  — Tiering config
+~/.claude/skills/           — 4 skill definitions (global — work in any project)
+~/.claude/CLAUDE.md         — Memory protocol (loads every session)
+~/.claude/settings.json     — Hook config (fires every session)
+~/.memory/                  — Shared cross-project memories
+<repo>/.memory/             — Project-specific memories
 ```
 
-Quick test sequence:
+Quick test:
 ```bash
 git clone https://github.com/vikingh27/mempalace
 cd mempalace
 # Open with Claude Code, then:
-/memory-status                        # see the dashboard
-/recall <any question>                # test retrieval
+/memory-status                        # see both project + shared dashboards
+/recall <any question>                # test retrieval across both scopes
 # edit .memory/lifecycle.json → set test_mode.enabled: true
 /memory-cleanup                       # watch memories tier
 /memory-status                        # see the after state
@@ -394,11 +350,12 @@ cd mempalace
 
 ## What Do You Think?
 
-This is very much a v1. I'd genuinely love feedback and suggestions:
+This is working for me, but it's a v1 and I know there's room to improve. I'd genuinely love feedback, suggestions, or completely different approaches:
 
-- **Is there a better way to handle memory lifecycle?** I went with 30/60/90 day tiering, but maybe there's a smarter approach — usage-based decay, importance scoring, something else entirely?
-- **How are you managing memory growth?** If you're using Claude Code across long projects, I'm curious what's working for you.
-- **Has anyone else hit the "Auto Memory just accumulates" wall?** Would a built-in lifecycle/aging feature be useful?
-- **What else have you built with Skills + Hooks + CLAUDE.md?** I feel like this combo is underexplored.
+- **Is 30/60/90 day tiering the right model?** Maybe usage-based decay makes more sense — memories that get recalled frequently stay active longer, rarely-accessed ones age faster. Or importance scoring at save time. What would you do differently?
+- **How are you managing memory growth?** If you're using Claude Code across long-running projects with many sessions, I'm curious what's working for you. Are you hitting the same scaling wall, or have you found a different solution?
+- **Is there a better way to handle cross-project memory?** My shared `~/.memory/` approach is simple but basic. Maybe there's a more elegant way to share context across repos.
+- **Has anyone else hit the "Auto Memory just accumulates" wall?** Would a built-in lifecycle/aging feature for Auto Memory be useful, or is this too niche?
+- **What else have you built with Skills + Hooks + CLAUDE.md?** I feel like this combination is underexplored. I'd love to see what other systems people are building with it.
 
-I started this because my manual document-tracking workflow wasn't scaling. This is what I landed on. If you see ways to improve it — or if you're solving the same problem differently — I'd love to hear about it.
+I started this because my manual document-tracking workflow wasn't scaling, and MemPalace inspired me to think about memory more seriously. This is where I've landed so far. If you're solving the same problem — or if you see obvious improvements I'm missing — I'd really love to hear about it.
